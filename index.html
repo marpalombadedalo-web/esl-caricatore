@@ -52,7 +52,7 @@ canvas#view{width:300px;height:300px;image-rendering:pixelated;border:1px solid 
 <div class="page">
   <div class="eyebrow">Hanshow Stellar · BWR · TLSR8359</div>
   <h1>Caricatore immagini</h1>
-  <p class="sub">Da usare con «Firmware adattato a 1.54.bin» oppure «Firmware adattato a 2.13.bin», in base al tuo tag. Apri questa pagina in Chrome o Edge.</p>
+  <p class="sub">Da usare con «Firmware adattato a 1.54.bin» oppure «Firmware adattato a 2.13.bin», in base al tuo tag. Apri questa pagina in Chrome o Edge (su iPhone: Bluefy). <span class="mono">v2</span></p>
 
   <div class="grid">
     <section class="card">
@@ -211,7 +211,24 @@ function pack(){
 
 /* ---------- Bluetooth ---------- */
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-async function write(bytes){ await chr.writeValue(Uint8Array.from(bytes)); }
+// Scrittura robusta: prima "con risposta" (come su PC); se il tag non risponde entro 6 s e la caratteristica lo permette,
+// passa a "senza risposta" (con una piccola pausa tra un pacchetto e l'altro). Su iPhone/Bluefy puo' servire.
+let mode = null;                                       // null = ancora da decidere, 'resp' | 'noresp'
+const withTimeout = (p, ms, what) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('nessuna risposta dal tag (' + what + ')')), ms))]);
+async function write(bytes){
+  const v = Uint8Array.from(bytes), pr = chr.properties || {};
+  const noResp = async () => { await chr.writeValueWithoutResponse(v); await sleep(25); };
+  if (mode === 'noresp') return noResp();
+  try {
+    await withTimeout(chr.writeValueWithResponse ? chr.writeValueWithResponse(v) : chr.writeValue(v), 6000, 'scrittura con risposta');
+    mode = 'resp';
+  } catch (e) {
+    if (pr.writeWithoutResponse && chr.writeValueWithoutResponse) {
+      log('Scrittura con risposta non riuscita (' + e.message + '): passo a "senza risposta".');
+      mode = 'noresp'; await noResp();
+    } else throw e;
+  }
+}
 function setState(on){
   $('state').className = 'badge ' + (on ? 'badge--on' : 'badge--off');
   $('state').innerHTML = '<span class="dot"></span>' + (on ? 'connesso' : 'non connesso');
@@ -227,6 +244,10 @@ async function connect(){
         const srv = await device.gatt.connect();
         const svc = await srv.getPrimaryService(SERVICE);
         chr = await svc.getCharacteristic(CHAR);
+        mode = null;
+        const pr = chr.properties || {};
+        log('Proprieta\' della caratteristica: ' + (Object.keys(pr).filter(k => pr[k]).join(', ') || 'non disponibili'));
+        await sleep(300);                                // piccola pausa: su iPhone la prima scrittura subito dopo la connessione a volte si perde
         setState(true); log('Connesso: caratteristica di scrittura trovata.'); return;
       } catch (e) { log('Errore: ' + e.message); await sleep(400); }
     }
@@ -235,19 +256,32 @@ async function connect(){
 }
 async function send(){
   if (!chr) return;
-  const data = pack(); $('bSend').disabled = true;
+  const data = pack(); $('bSend').disabled = true; $('prog').style.width = '0%';
+  $('pmsg').textContent = 'Invio avviato: attendo la risposta del tag...'; log('Invio avviato (' + data.length + ' byte).');
+  let chunk = CHUNK;
   try {
     await write([0x00, 0x00]); await write([0x02, 0x00, 0x00]);
     const t0 = Date.now();
-    for (let p = 0; p < data.length; p += CHUNK) {
-      await write([0x03, ...data.subarray(p, p + CHUNK)]);
-      const f = Math.min(1, (p + CHUNK) / data.length);
+    for (let p = 0; p < data.length; ) {
+      const part = data.subarray(p, p + chunk);
+      try { await write([0x03, ...part]); }
+      catch (e) {
+        // pacchetto rifiutato (troppo grande per questo telefono): riprovo piu' piccolo e riallineo la posizione nel tag
+        if (chunk > 20 && !/nessuna risposta/.test(e.message)) {
+          chunk = chunk > 120 ? 120 : chunk > 60 ? 60 : 20;
+          log('Pacchetto rifiutato (' + e.message + '): riprovo con ' + chunk + ' byte.');
+          await write([0x02, p >> 8, p & 255]); continue;
+        }
+        throw e;
+      }
+      p += part.length;
+      const f = Math.min(1, p / data.length);
       $('prog').style.width = (f * 100) + '%'; $('pmsg').textContent = 'Invio ' + Math.round(f * 100) + '%';
     }
     await write([0x01]);
     $('pmsg').textContent = 'Inviato in ' + ((Date.now() - t0) / 1000).toFixed(1) + ' s. Il pannello si aggiorna in qualche secondo.';
     log('Immagine inviata (' + data.length + ' byte).');
-  } catch (e) { log('Errore di invio: ' + e.message); $('pmsg').textContent = 'Invio interrotto.'; }
+  } catch (e) { log('Errore di invio: ' + e.message); $('pmsg').textContent = 'Invio interrotto: ' + e.message + '. Riavvia il tag e riconnettiti.'; $('prog').style.width = '0%'; }
   $('bSend').disabled = !chr;
 }
 
