@@ -52,7 +52,7 @@ canvas#view{width:300px;height:300px;image-rendering:pixelated;border:1px solid 
 <div class="page">
   <div class="eyebrow">Hanshow Stellar · BWR · TLSR8359</div>
   <h1>Caricatore immagini</h1>
-  <p class="sub">Da usare con «Firmware adattato a 1.54.bin» oppure «Firmware adattato a 2.13.bin», in base al tuo tag. Apri questa pagina in Chrome o Edge (su iPhone: Bluefy). <span class="mono">v2</span></p>
+  <p class="sub">Da usare con «Firmware adattato a 1.54.bin» oppure «Firmware adattato a 2.13.bin», in base al tuo tag. Apri questa pagina in Chrome o Edge (su iPhone: Bluefy). <span class="mono">v3</span></p>
 
   <div class="grid">
     <section class="card">
@@ -214,10 +214,16 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // Scrittura robusta: prima "con risposta" (come su PC); se il tag non risponde entro 6 s e la caratteristica lo permette,
 // passa a "senza risposta" (con una piccola pausa tra un pacchetto e l'altro). Su iPhone/Bluefy puo' servire.
 let mode = null;                                       // null = ancora da decidere, 'resp' | 'noresp'
+let chunkLimit = CHUNK;                                // dimensione massima del pacchetto: scende in modalita' "senza risposta"
+const isApple = /iPhone|iPad|iPod/.test(navigator.userAgent);
 const withTimeout = (p, ms, what) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('nessuna risposta dal tag (' + what + ')')), ms))]);
 async function write(bytes){
   const v = Uint8Array.from(bytes), pr = chr.properties || {};
-  const noResp = async () => { await chr.writeValueWithoutResponse(v); await sleep(25); };
+  const noResp = async () => { await chr.writeValueWithoutResponse(v); await sleep(40); };
+  // su iPhone la risposta di scrittura del tag spesso non arriva: se il tag accetta scritture "senza risposta", parto da quelle
+  if (mode === null && isApple && pr.writeWithoutResponse && chr.writeValueWithoutResponse) {
+    mode = 'noresp'; chunkLimit = Math.min(chunkLimit, 120); log('iPhone: uso la scrittura senza risposta (pacchetti da ' + chunkLimit + ' byte).');
+  }
   if (mode === 'noresp') return noResp();
   try {
     await withTimeout(chr.writeValueWithResponse ? chr.writeValueWithResponse(v) : chr.writeValue(v), 6000, 'scrittura con risposta');
@@ -225,7 +231,7 @@ async function write(bytes){
   } catch (e) {
     if (pr.writeWithoutResponse && chr.writeValueWithoutResponse) {
       log('Scrittura con risposta non riuscita (' + e.message + '): passo a "senza risposta".');
-      mode = 'noresp'; await noResp();
+      mode = 'noresp'; chunkLimit = Math.min(chunkLimit, 120); await noResp();
     } else throw e;
   }
 }
@@ -244,7 +250,7 @@ async function connect(){
         const srv = await device.gatt.connect();
         const svc = await srv.getPrimaryService(SERVICE);
         chr = await svc.getCharacteristic(CHAR);
-        mode = null;
+        mode = null; chunkLimit = CHUNK;
         const pr = chr.properties || {};
         log('Proprieta\' della caratteristica: ' + (Object.keys(pr).filter(k => pr[k]).join(', ') || 'non disponibili'));
         await sleep(300);                                // piccola pausa: su iPhone la prima scrittura subito dopo la connessione a volte si perde
@@ -263,7 +269,7 @@ async function send(){
     await write([0x00, 0x00]); await write([0x02, 0x00, 0x00]);
     const t0 = Date.now();
     for (let p = 0; p < data.length; ) {
-      const part = data.subarray(p, p + chunk);
+      const part = data.subarray(p, p + Math.min(chunk, chunkLimit));
       try { await write([0x03, ...part]); }
       catch (e) {
         // pacchetto rifiutato (troppo grande per questo telefono): riprovo piu' piccolo e riallineo la posizione nel tag
