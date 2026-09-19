@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Caricatore immagini ESL</title>
+<style>
+:root{
+  --bg:#F6F7ED; --surface:#FFFFFF; --ink:#001F3F; --ink-2:#5B6670; --ink-3:#9AA0A6;
+  --hairline:rgba(0,31,63,.10); --fluo:#DBE64C; --fluo-press:#C8D43B; --on-fluo:#001F3F;
+  --green:#00804C; --red:#E5484D; --surface-dark:#001F3F; --text-on-dark:#F6F7ED;
+  --focus-ring:0 0 0 3px rgba(219,230,76,.45);
+  --r-card:14px; --r-btn:12px; --r-pill:999px;
+  --e1:0 1px 2px rgba(0,31,63,.04), 0 6px 20px rgba(0,31,63,.06);
+  --font:'Geist', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --mono:'JetBrains Mono', ui-monospace, Consolas, monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{min-height:100dvh}
+body{background:var(--bg);color:var(--ink);font-family:var(--font);font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased}
+.page{max-width:980px;margin:0 auto;padding:32px 24px 80px}
+.eyebrow{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3)}
+h1{font-size:28px;font-weight:700;letter-spacing:-.02em;margin:4px 0 4px}
+.sub{color:var(--ink-2);margin-bottom:24px}
+.grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr))}
+.card{background:var(--surface);border:1px solid var(--hairline);border-radius:var(--r-card);box-shadow:var(--e1);padding:20px}
+.card h2{font-size:17px;font-weight:600;letter-spacing:-.01em;margin-bottom:12px;display:flex;align-items:center;gap:10px}
+.num{font-family:var(--mono);font-size:12px;font-weight:600;background:var(--surface-dark);color:var(--text-on-dark);border-radius:var(--r-pill);width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0}
+label{font-size:13px;font-weight:500;color:var(--ink-2)}
+select,input[type=file],input[type=range]{font:inherit;font-size:13px;color:var(--ink)}
+select{padding:7px 10px;border-radius:10px;border:1px solid var(--hairline);background:var(--surface)}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:10px 18px;border-radius:var(--r-pill);font-weight:600;font-size:14px;border:none;cursor:pointer;font-family:inherit;transition:transform 120ms,background 180ms}
+.btn:active{transform:translateY(1px)} .btn:focus-visible{outline:none;box-shadow:var(--focus-ring)}
+.btn--primary{background:var(--fluo);color:var(--on-fluo)} .btn--primary:hover{background:var(--fluo-press)}
+.btn--ghost{background:transparent;color:var(--ink);box-shadow:inset 0 0 0 1px var(--hairline)}
+.btn:disabled{background:#E7E8DF;color:var(--ink-3);cursor:not-allowed;box-shadow:none}
+.badge{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:var(--r-pill);font-family:var(--mono);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.badge .dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+.badge--off{background:rgba(91,102,112,.14);color:var(--ink-2)} .badge--on{background:rgba(0,128,76,.12);color:var(--green)}
+.preview{display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap}
+canvas#view{width:300px;height:300px;image-rendering:pixelated;border:1px solid var(--hairline);border-radius:8px;background:#fff}
+.hint{font-size:12px;color:var(--ink-3)}
+.mono{font-family:var(--mono)}
+.bar{height:8px;border-radius:99px;background:rgba(0,31,63,.08);overflow:hidden;margin-top:8px}
+.bar>i{display:block;height:100%;width:0;background:var(--fluo);transition:width 120ms}
+#log{font-family:var(--mono);font-size:12px;background:var(--surface-dark);color:var(--text-on-dark);border-radius:10px;padding:12px;height:150px;overflow:auto;white-space:pre-wrap;margin-top:8px}
+.warn{background:rgba(229,72,77,.08);border-left:3px solid var(--red);padding:10px 12px;border-radius:0 8px 8px 0;font-size:13px;margin:10px 0}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="eyebrow">Hanshow Stellar · BWR · TLSR8359</div>
+  <h1>Caricatore immagini</h1>
+  <p class="sub">Da usare con «Firmware adattato a 1.54.bin» oppure «Firmware adattato a 2.13.bin», in base al tuo tag. Apri questa pagina in Chrome o Edge.</p>
+
+  <div class="grid">
+    <section class="card">
+      <h2><span class="num">1</span>Connessione</h2>
+      <div class="row">
+        <button class="btn btn--primary" id="bConnect">Connetti</button>
+        <button class="btn btn--ghost" id="bDisc" disabled>Disconnetti</button>
+        <span class="badge badge--off" id="state"><span class="dot"></span>non connesso</span>
+      </div>
+      <p class="hint">Nel selettore scegli il tag: il nome è <span class="mono">ESL_xxxxxx</span>. Se non compare, stacca e ricollega l'alimentazione del tag e riprova.</p>
+      <div id="log"></div>
+    </section>
+
+    <section class="card">
+      <h2><span class="num">2</span>Immagine</h2>
+      <div class="row"><label>Pannello <select id="panel"><option value="154">1,54″ (200×200)</option><option value="213">2,13″ (250×122)</option></select></label></div>
+      <div class="row"><input type="file" id="file" accept="image/*"><button class="btn btn--ghost" id="bTest">Immagine di prova</button></div>
+      <div class="row">
+        <label>Adattamento <select id="fit"><option value="cover">Riempi (taglia)</option><option value="contain">Adatta (bordi bianchi)</option><option value="stretch">Stira</option></select></label>
+        <label>Colori <select id="mode"><option value="3">Bianco / nero / rosso</option><option value="2">Bianco / nero</option></select></label>
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="dither" checked> Dithering</label>
+        <label>Soglia <input type="range" id="thr" min="40" max="220" value="128"></label>
+      </div>
+      <div class="row">
+        <label>Rotazione <select id="rot"><option value="0">0°</option><option value="90">90°</option><option value="180">180°</option><option value="270">270°</option></select></label>
+        <label><input type="checkbox" id="fx"> Specchia ↔</label>
+        <label><input type="checkbox" id="fy"> Specchia ↕</label>
+      </div>
+      <p class="hint">L'anteprima è ciò che deve comparire sul tag tenuto come per l'orologio. Se sul tag esce ruotata o specchiata, cambia rotazione o specchio qui e reinvia.</p>
+    </section>
+
+    <section class="card">
+      <h2><span class="num">3</span>Anteprima e invio</h2>
+      <div class="preview">
+        <canvas id="view" width="200" height="200"></canvas>
+        <div>
+          <div class="row"><button class="btn btn--primary" id="bSend" disabled>Invia al tag</button></div>
+          <div class="row"><button class="btn btn--ghost" id="bClock" disabled>Riavvia l'orologio</button></div>
+          <div class="bar"><i id="prog"></i></div>
+          <p class="hint" id="pmsg">Nessun invio in corso.</p>
+        </div>
+      </div>
+      <div class="warn" id="warnBt" hidden>Questo browser non supporta il Bluetooth web. Usa Chrome o Edge.</div>
+    </section>
+  </div>
+</div>
+
+<script>
+// Profilo del pannello: W x H pixel visibili, HP = altezza arrotondata a multipli di 8 (il 2,13" ha 122 righe vere su 128).
+let W = 200, H = 200, HP = 200;
+const PLANE = 5000;                                    // il firmware mette il piano rosso a 5000 byte dall'inizio, per entrambi i pannelli
+const SERVICE = '13187b10-eba9-a3ba-044e-83d3217d9a38';
+const CHAR    = '4b646063-6264-f3a7-8941-e65356ea82fe';
+const CHUNK   = 240;                                   // come la pagina originale
+const $ = id => document.getElementById(id);
+
+let device = null, chr = null, srcImg = null, idx = new Uint8Array(W * H);   // 0 bianco, 1 nero, 2 rosso
+
+function setProfile(p){
+  if (p === '213') { W = 250; H = 122; HP = 128; } else { W = 200; H = 200; HP = 200; }
+  idx = new Uint8Array(W * H);
+  const v = $('view'); v.width = W; v.height = H; v.style.width = (W * 1.5) + 'px'; v.style.height = (H * 1.5) + 'px';
+}
+
+/* ---------- log ---------- */
+function log(m){ const t = new Date().toLocaleTimeString('it-IT'); $('log').textContent += t + '  ' + m + '\n'; $('log').scrollTop = 1e9; }
+
+/* ---------- immagine -> 3 colori ---------- */
+const PAL = [[255,255,255],[0,0,0],[196,22,28]];
+function render(){
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, W, H);
+  if (srcImg) {
+    g.save();
+    g.translate(W / 2, H / 2);
+    g.rotate(+$('rot').value * Math.PI / 180);
+    g.scale($('fx').checked ? -1 : 1, $('fy').checked ? -1 : 1);
+    const iw = srcImg.width, ih = srcImg.height, fit = $('fit').value;
+    let dw = W, dh = H;
+    if (fit !== 'stretch') { const s = (fit === 'cover' ? Math.max : Math.min)(W / iw, H / ih); dw = iw * s; dh = ih * s; }
+    g.drawImage(srcImg, -dw / 2, -dh / 2, dw, dh);
+    g.restore();
+  }
+  quantize(g.getImageData(0, 0, W, H));
+  paint();
+}
+function quantize(img){
+  const d = img.data, n = W * H, three = $('mode').value === '3', dith = $('dither').checked, thr = +$('thr').value;
+  const buf = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) { buf[i*3] = d[i*4]; buf[i*3+1] = d[i*4+1]; buf[i*3+2] = d[i*4+2]; }
+  const pal = three ? PAL : PAL.slice(0, 2);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = y * W + x, r = buf[i*3], gg = buf[i*3+1], b = buf[i*3+2];
+    let best = 0;
+    if (!three) { best = (0.299*r + 0.587*gg + 0.114*b) < thr ? 1 : 0; }
+    else {
+      let bd = 1e12;
+      // il "bianco" e il "nero" si spostano con la soglia, cosi' lo slider ha effetto anche a 3 colori
+      const off = thr - 128;
+      for (let k = 0; k < 3; k++) {
+        let pr = pal[k][0], pg = pal[k][1], pb = pal[k][2];
+        let dist = (r-pr)**2 + (gg-pg)**2 + (b-pb)**2;
+        if (k === 1) dist -= off * 90; if (k === 0) dist += off * 90;
+        if (dist < bd) { bd = dist; best = k; }
+      }
+    }
+    idx[i] = best;
+    if (dith) {
+      const er = r - pal[best][0], eg = gg - pal[best][1], eb = b - pal[best][2];
+      const push = (xx, yy, f) => { if (xx < 0 || xx >= W || yy >= H) return; const j = (yy*W+xx)*3; buf[j]+=er*f; buf[j+1]+=eg*f; buf[j+2]+=eb*f; };
+      push(x+1,y,7/16); push(x-1,y+1,3/16); push(x,y+1,5/16); push(x+1,y+1,1/16);
+    }
+  }
+}
+function paint(){
+  const g = $('view').getContext('2d'), im = g.createImageData(W, H), col = [[255,255,255],[17,17,17],[196,22,28]];
+  for (let i = 0; i < W * H; i++) { const c = col[idx[i]]; im.data[i*4]=c[0]; im.data[i*4+1]=c[1]; im.data[i*4+2]=c[2]; im.data[i*4+3]=255; }
+  g.putImageData(im, 0, 0);
+}
+function testPattern(){
+  const c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d');
+  g.fillStyle = '#fff'; g.fillRect(0,0,W,H);
+  g.strokeStyle = '#000'; g.lineWidth = 4; g.strokeRect(2,2,W-4,H-4);
+  g.fillStyle = '#000'; g.font = 'bold 22px sans-serif'; g.textAlign = 'center';
+  g.fillText($('panel').value === '213' ? 'ESL 2,13"' : 'ESL 1,54"', W/2, H*0.22);
+  g.fillStyle = '#c4161c'; g.fillRect(W*0.12, H*0.35, W*0.76, H*0.2);
+  g.fillStyle = '#fff'; g.fillText('ROSSO', W/2, H*0.35 + H*0.2*0.72);
+  g.fillStyle = '#000'; g.fillText('NERO', W/2, H*0.72);
+  g.beginPath(); g.moveTo(10,10); g.lineTo(46,10); g.lineTo(10,46); g.closePath(); g.fill();   // angolo in alto a sinistra
+  g.font = 'bold 14px sans-serif'; g.textAlign = 'left'; g.fillText('ALTO-SX', 14, H - 12);
+  const im = new Image(); im.onload = () => { srcImg = im; $('fit').value = 'stretch'; render(); }; im.src = c.toDataURL();
+}
+
+/* ---------- impacchettamento (stesso mapping di FixBuffer del firmware) ---------- */
+function pack(){
+  const C = HP / 8, plane = W * C;                  // 1,54": 200 x 25 = 5000 byte; 2,13": 250 x 16 = 4000 byte
+  const out = new Uint8Array(PLANE + plane);        // [0..plane) bianco/nero, [PLANE..PLANE+plane) rosso
+  for (let r = 0; r < W; r++) {
+    const X = W - 1 - r;                            // le righe della RAM sono le colonne dell'immagine, da destra
+    for (let c = 0; c < C; c++) {
+      let bw = 0, rd = 0;
+      for (let i = 0; i < 8; i++) {
+        const Y = c * 8 + i;
+        const p = Y < H ? idx[Y * W + X] : 0;      // le righe oltre H (padding del 2,13") sono bianche
+        if (p !== 1) bw |= 1 << (7 - i);            // 1 = bianco, 0 = nero (il rosso resta "bianco" nel piano B/N)
+        if (p === 2) rd |= 1 << (7 - i);            // 1 = rosso
+      }
+      out[r * C + c] = bw;
+      out[PLANE + r * C + c] = rd;
+    }
+  }
+  return out;
+}
+
+/* ---------- Bluetooth ---------- */
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function write(bytes){ await chr.writeValue(Uint8Array.from(bytes)); }
+function setState(on){
+  $('state').className = 'badge ' + (on ? 'badge--on' : 'badge--off');
+  $('state').innerHTML = '<span class="dot"></span>' + (on ? 'connesso' : 'non connesso');
+  $('bConnect').disabled = on; $('bDisc').disabled = !on; $('bSend').disabled = !on; $('bClock').disabled = !on;
+}
+async function connect(){
+  try {
+    device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: [SERVICE] });
+    device.addEventListener('gattserverdisconnected', () => { chr = null; setState(false); log('Disconnesso.'); });
+    for (let t = 1; t <= 6; t++) {
+      try {
+        log('Connessione a ' + device.name + ' (tentativo ' + t + ')');
+        const srv = await device.gatt.connect();
+        const svc = await srv.getPrimaryService(SERVICE);
+        chr = await svc.getCharacteristic(CHAR);
+        setState(true); log('Connesso: caratteristica di scrittura trovata.'); return;
+      } catch (e) { log('Errore: ' + e.message); await sleep(400); }
+    }
+    log('Impossibile connettersi.');
+  } catch (e) { log('Annullato: ' + e.message); }
+}
+async function send(){
+  if (!chr) return;
+  const data = pack(); $('bSend').disabled = true;
+  try {
+    await write([0x00, 0x00]); await write([0x02, 0x00, 0x00]);
+    const t0 = Date.now();
+    for (let p = 0; p < data.length; p += CHUNK) {
+      await write([0x03, ...data.subarray(p, p + CHUNK)]);
+      const f = Math.min(1, (p + CHUNK) / data.length);
+      $('prog').style.width = (f * 100) + '%'; $('pmsg').textContent = 'Invio ' + Math.round(f * 100) + '%';
+    }
+    await write([0x01]);
+    $('pmsg').textContent = 'Inviato in ' + ((Date.now() - t0) / 1000).toFixed(1) + ' s. Il pannello si aggiorna in qualche secondo.';
+    log('Immagine inviata (' + data.length + ' byte).');
+  } catch (e) { log('Errore di invio: ' + e.message); $('pmsg').textContent = 'Invio interrotto.'; }
+  $('bSend').disabled = !chr;
+}
+
+/* ---------- eventi ---------- */
+$('bConnect').onclick = connect;
+$('bDisc').onclick = () => device && device.gatt.disconnect();
+$('bSend').onclick = send;
+$('bClock').onclick = async () => { try { await write([0x05]); log('Orologio riattivato: comparira\' al prossimo minuto.'); } catch (e) { log('Errore: ' + e.message); } };
+$('bTest').onclick = testPattern;
+$('panel').addEventListener('input', () => { setProfile($('panel').value); render(); });
+$('file').onchange = e => { const f = e.target.files[0]; if (!f) return; const im = new Image(); im.onload = () => { srcImg = im; render(); }; im.src = URL.createObjectURL(f); };
+['fit','mode','dither','thr','rot','fx','fy'].forEach(id => $(id).addEventListener('input', render));
+if (!navigator.bluetooth) { $('warnBt').hidden = false; $('bConnect').disabled = true; }
+render();
+</script>
+</body>
+</html>
