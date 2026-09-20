@@ -59,7 +59,7 @@ ol.steps li{margin:3px 0}
 <div class="page">
   <div class="eyebrow">Hanshow Stellar · BWR · TLSR8359</div>
   <h1>Caricatore immagini</h1>
-  <p class="sub">Da usare con «Firmware adattato a 1.54.bin» oppure «Firmware adattato a 2.13.bin», in base al tuo tag. Apri questa pagina in Chrome o Edge (su iPhone: Bluefy). <span class="mono">v7</span></p>
+  <p class="sub">Da usare con «Firmware adattato a 1.54.bin» oppure «Firmware adattato a 2.13.bin», in base al tuo tag. Apri questa pagina in Chrome o Edge (su iPhone: Bluefy). <span class="mono">v8</span></p>
 
   <div class="grid">
     <section class="card">
@@ -160,6 +160,36 @@ ol.steps li{margin:3px 0}
       </details>
       <div class="logbox" id="flog"></div>
       <div class="warn" id="warnSerial" hidden>Questo browser non supporta la porta seriale. Usa Chrome o Edge su PC.</div>
+    </section>
+
+    <section class="card" id="wireCard">
+      <h2><span class="num">5</span>Invio via cavo (PC)</h2>
+      <p class="hint">Manda al tag immagini, pannelli e video con l'adattatore USB-seriale, molto più in fretta del Bluetooth. Serve il firmware «v6 (cavo)». Solo Chrome o Edge su PC.</p>
+      <ol class="steps">
+        <li>Cablaggio <b>incrociato</b>: TXD dell'adattatore → pad <b>RXD</b> del tag, RXD dell'adattatore ← pad <b>TXD</b> del tag, 3V3→VCC, GND→GND. Il pad SWS resta libero.</li>
+        <li>Apri la porta, poi <b>Invia via cavo</b> (usa l'anteprima della sezione 3) oppure carica un video.</li>
+      </ol>
+      <div class="row">
+        <button class="btn btn--primary" id="wOpen">Apri porta</button>
+        <label>Aggiornamento <select id="wMode"><option value="full">Completo (con il rosso)</option><option value="fast">Veloce (solo bianco e nero)</option></select></label>
+      </div>
+      <div class="row">
+        <button class="btn btn--primary" id="wSend" disabled>Invia via cavo</button>
+        <button class="btn btn--ghost" id="wClock" disabled>Riavvia l'orologio</button>
+      </div>
+      <div class="sep"></div>
+      <div class="row"><input type="file" id="wVideo" accept="video/*"></div>
+      <div class="row">
+        <label>Velocità <select id="wSpeed"><option value="1">1×</option><option value="0.5">0,5×</option><option value="0.25">0,25×</option></select></label>
+        <label><input type="checkbox" id="wLoop" checked> Ripeti</label>
+        <button class="btn btn--primary" id="wPlay" disabled>Riproduci video</button>
+        <button class="btn btn--ghost" id="wStop" disabled>Ferma</button>
+      </div>
+      <div class="bar"><i id="wProg"></i></div>
+      <p class="hint" id="wMsg">Porta chiusa.</p>
+      <p class="hint">Il video usa il bianco e nero con aggiornamento veloce, e salta i fotogrammi che il pannello non fa in tempo a mostrare. Ogni 100 fotogrammi fa un aggiornamento completo per togliere i residui. Il sensore interno del tag si legge solo via Bluetooth: per la temperatura via cavo usa il meteo o il valore manuale.</p>
+      <div class="logbox" id="wlog"></div>
+      <div class="warn" id="warnSerial2" hidden>Questo browser non supporta la porta seriale. Usa Chrome o Edge su PC.</div>
     </section>
   </div>
 </div>
@@ -632,6 +662,135 @@ $('fUnlock').onclick = () => fRun('unlock', async () => { await fActivate(+$('fA
 $('fReset').onclick = () => fRun('reset', async () => { await fActivate(+$('fAtime').value); await fSoftReset(); flog('Chip riavviato.'); fstatus('Chip riavviato.', 100); });
 $('fErase').onclick = () => { if (confirm('Cancellare TUTTA la flash?\nSi perdono anche indirizzo e calibrazione radio del chip. Continuare?')) fRun('erase', async () => { await fActivate(+$('fAtime').value); await fEraseAll(); flog('Flash cancellata.'); fstatus('Flash cancellata: ora scrivi un firmware.', 100); }); };
 if (!('serial' in navigator)) { $('warnSerial').hidden = false; $('fOpen').disabled = true; }
+
+/* ---------- invio via cavo (WebSerial) ----------
+   Stessi comandi del Bluetooth, incorniciati: AA 55 | LEN(2) | comando + dati | CRC8. Il tag risponde 0xA6 (fatto) o 0xE7 (CRC errato).
+   Il chip dorme quasi sempre: prima di parlargli si tiene la linea bassa per qualche ms ("break") per svegliarlo. */
+const WR = { port: null, writer: null, reader: null, open: false, replies: [], waiter: null, lastAct: 0, playing: false };
+const WBAUD = 500000, WCHUNK = 240;
+function wlog(m){ const t = new Date().toLocaleTimeString('it-IT'); $('wlog').textContent += t + '  ' + m + '\n'; $('wlog').scrollTop = 1e9; }
+function wstatus(m, pct){ $('wMsg').textContent = m; if (pct !== undefined) $('wProg').style.width = pct + '%'; }
+function crc8(bytes){ let c = 0; for (const b of bytes) { c ^= b; for (let i = 0; i < 8; i++) c = (c & 0x80) ? ((c << 1) ^ 0x07) & 255 : (c << 1) & 255; } return c; }
+function wframe(payload){ const body = [payload.length & 255, payload.length >> 8, ...payload]; return Uint8Array.from([0xAA, 0x55, ...body, crc8(body)]); }
+
+function wPush(r){ if (WR.waiter) { const w = WR.waiter; WR.waiter = null; w(r); } else WR.replies.push(r); }
+function wWait(ms){
+  if (WR.replies.length) return Promise.resolve(WR.replies.shift());
+  return new Promise(res => { const t = setTimeout(() => { WR.waiter = null; res('timeout'); }, ms); WR.waiter = r => { clearTimeout(t); res(r); }; });
+}
+async function wReadLoop(){                             // tutto quello che non e' 0xA6 / 0xE7 e' testo di debug del firmware
+  try { for (;;) { const { value, done } = await WR.reader.read(); if (done) break; for (const b of value) { if (b === 0xA6) wPush('ack'); else if (b === 0xE7) wPush('nak'); } } } catch (e) {}
+}
+async function wOnce(payload, ms){                      // un pacchetto e la sua risposta
+  WR.replies.length = 0; await WR.writer.write(wframe(payload)); WR.lastAct = Date.now(); return wWait(ms);
+}
+async function wCmd(payload, ms = 1500, tries = 4){
+  for (let t = 0; t < tries; t++) { const r = await wOnce(payload, ms); if (r === 'ack') return; }
+  throw new Error('il tag non risponde');
+}
+async function wWake(){                                 // sveglia il tag se e' fermo da un po'
+  if (Date.now() - WR.lastAct < 2500) return;
+  for (let t = 0; t < 12; t++) {
+    try { await WR.port.setSignals({ break: true }); await sleep(30); await WR.port.setSignals({ break: false }); } catch (e) {}
+    await sleep(15);
+    if (await wOnce([0x07], 150) === 'ack') return;
+  }
+  throw new Error('il tag non si sveglia: controlla il cablaggio incrociato (TXD→RXD) e che abbia il firmware v6 (cavo)');
+}
+async function wChunk(p, part){                         // se la conferma si perde, si riallinea la posizione: niente dati sfasati
+  let resync = false;
+  for (let t = 0; t < 4; t++) {
+    if (resync) await wCmd([0x02, p >> 8, p & 255], 800, 2);
+    if (await wOnce([0x03, ...part], 1500) === 'ack') return;
+    resync = true;
+  }
+  throw new Error('il tag non conferma i dati');
+}
+// fast = aggiornamento veloce (solo il piano bianco/nero, ridisegno parziale); altrimenti completo con il rosso
+async function wSend(data, fast, label){
+  await wWake();
+  const len = fast ? W * (HP / 8) : data.length;
+  await wCmd([0x00, 0x00]); await wCmd([0x02, 0, 0]);
+  for (let p = 0; p < len; p += WCHUNK) { await wChunk(p, data.subarray(p, Math.min(len, p + WCHUNK))); if (!WR.playing) wstatus((label || 'Invio') + ' ' + Math.round(Math.min(len, p + WCHUNK) * 100 / len) + '%', Math.min(len, p + WCHUNK) * 100 / len); }
+  await wCmd([0x01, fast ? 1 : 0], 30000);
+}
+function wSetButtons(){
+  const on = WR.open;
+  $('wSend').disabled = !on || WR.playing; $('wClock').disabled = !on || WR.playing;
+  $('wPlay').disabled = !on || WR.playing || !$('wVideo').files.length; $('wStop').disabled = !WR.playing;
+  $('wOpen').disabled = WR.playing;
+}
+async function wToggle(){
+  if (WR.open) {
+    WR.playing = false;
+    try { await WR.reader.cancel(); } catch (e) {} try { await WR.writer.close(); } catch (e) {} try { await WR.port.close(); } catch (e) {}
+    WR.open = false; $('wOpen').textContent = 'Apri porta'; wstatus('Porta chiusa.', 0); wlog('Porta chiusa.'); wSetButtons(); return;
+  }
+  try {
+    const filters = [0x10c4, 0x1a86, 0x0403, 0x067b].map(v => ({ usbVendorId: v }));
+    WR.port = await navigator.serial.requestPort({ filters });
+    await WR.port.open({ baudRate: WBAUD, bufferSize: 1024 });
+    WR.writer = WR.port.writable.getWriter(); WR.reader = WR.port.readable.getReader(); WR.lastAct = 0; WR.replies.length = 0;
+    wReadLoop();
+    WR.open = true; $('wOpen').textContent = 'Chiudi porta'; wstatus('Porta aperta a ' + WBAUD + ' baud.', 0); wlog('Porta aperta a ' + WBAUD + ' baud.');
+  } catch (e) { wlog('Porta non aperta: ' + e.message); wstatus('Porta non aperta: ' + e.message, 0); }
+  wSetButtons();
+}
+async function wSendCurrent(){
+  if (!WR.open || WR.playing) return;
+  $('wSend').disabled = true;
+  try {
+    if ($('content').value === 'panel' && $('tsrc').value === 'weather' && ['temp', 'both'].includes($('ptype').value)) await refreshTemp();
+    render(); const fast = $('wMode').value === 'fast', t0 = Date.now();
+    await wSend(pack(), fast); wstatus('Inviato in ' + ((Date.now() - t0) / 1000).toFixed(1) + ' s.', 100); wlog('Inviato (' + (fast ? 'veloce' : 'completo') + ') in ' + ((Date.now() - t0) / 1000).toFixed(1) + ' s.');
+  } catch (e) { wlog('Errore: ' + e.message); wstatus('Errore: ' + e.message, 0); }
+  wSetButtons();
+}
+
+// Riproduzione: `source` = { duration, frameAt(t) -> canvas }. Segue il tempo reale e salta i fotogrammi che non fa in tempo a mostrare.
+async function wPlayFrames(source, speed, loop){
+  const prevMode = $('mode').value, prevContent = $('content').value;
+  $('mode').value = '2'; $('content').value = 'image'; syncPanelUi();       // fotogrammi in bianco e nero, con le regole di adattamento e dithering della sezione 2
+  WR.playing = true; wSetButtons();
+  let frames = 0, shown = 0; const start = performance.now(); let t0 = start;
+  try {
+    while (WR.playing) {
+      let t = (performance.now() - t0) / 1000 * speed;
+      if (t >= source.duration) { if (loop) { t0 = performance.now(); t = 0; } else break; }
+      srcImg = await source.frameAt(t); render();
+      await wSend(pack(), frames % 100 !== 0, 'Fotogramma');                     // ogni 100: aggiornamento completo per togliere i residui
+      frames++; shown++;
+      const fps = shown / ((performance.now() - start) / 1000);
+      wstatus('Fotogramma ' + frames + ' · ' + fps.toFixed(2).replace('.', ',') + ' al secondo · tempo del video ' + t.toFixed(1) + ' s', Math.min(100, t / source.duration * 100));
+    }
+  } catch (e) { wlog('Errore: ' + e.message); wstatus('Errore: ' + e.message, 0); }
+  WR.playing = false; $('mode').value = prevMode; $('content').value = prevContent; syncPanelUi();
+  wlog('Riproduzione finita: ' + frames + ' fotogrammi.'); wSetButtons();
+}
+function videoSource(file){
+  return new Promise((resolve, reject) => {
+    const v = document.createElement('video'); v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = URL.createObjectURL(file);
+    v.onerror = () => reject(new Error('video non leggibile'));
+    v.onloadedmetadata = () => resolve({
+      duration: v.duration,
+      frameAt: t => new Promise(res => {
+        const done = () => { const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight; c.getContext('2d').drawImage(v, 0, 0); res(c); };
+        const to = setTimeout(done, 1500); v.onseeked = () => { clearTimeout(to); done(); };
+        v.currentTime = Math.min(Math.max(t, 0), v.duration - 0.05);
+      })
+    });
+  });
+}
+$('wOpen').onclick = wToggle;
+$('wSend').onclick = wSendCurrent;
+$('wClock').onclick = async () => { try { await wWake(); await wCmd([0x05]); wlog('Orologio riattivato: ricomparira\' al prossimo minuto.'); } catch (e) { wlog('Errore: ' + e.message); } };
+$('wVideo').onchange = wSetButtons;
+$('wPlay').onclick = async () => {
+  try { const src = await videoSource($('wVideo').files[0]); wlog('Video: ' + src.duration.toFixed(1) + ' s.'); await wPlayFrames(src, +$('wSpeed').value, $('wLoop').checked); }
+  catch (e) { wlog('Errore: ' + e.message); wstatus('Errore: ' + e.message, 0); wSetButtons(); }
+};
+$('wStop').onclick = () => { WR.playing = false; };
+if (!('serial' in navigator)) { $('warnSerial2').hidden = false; $('wOpen').disabled = true; }
 
 /* ---------- eventi ---------- */
 $('bConnect').onclick = connect;
