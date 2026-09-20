@@ -47,7 +47,11 @@ canvas#view{width:300px;height:300px;image-rendering:pixelated;border:1px solid 
 .mono{font-family:var(--mono)}
 .bar{height:8px;border-radius:99px;background:rgba(0,31,63,.08);overflow:hidden;margin-top:8px}
 .bar>i{display:block;height:100%;width:0;background:var(--fluo);transition:width 120ms}
-#log{font-family:var(--mono);font-size:12px;background:var(--surface-dark);color:var(--text-on-dark);border-radius:10px;padding:12px;height:150px;overflow:auto;white-space:pre-wrap;margin-top:8px}
+details{margin:10px 0}
+summary{cursor:pointer;font-size:13px;font-weight:500;color:var(--ink-2)}
+ol.steps{margin:8px 0 8px 18px;font-size:13px;color:var(--ink-2)}
+ol.steps li{margin:3px 0}
+#log,.logbox{font-family:var(--mono);font-size:12px;background:var(--surface-dark);color:var(--text-on-dark);border-radius:10px;padding:12px;height:150px;overflow:auto;white-space:pre-wrap;margin-top:8px}
 .warn{background:rgba(229,72,77,.08);border-left:3px solid var(--red);padding:10px 12px;border-radius:0 8px 8px 0;font-size:13px;margin:10px 0}
 </style>
 </head>
@@ -55,7 +59,7 @@ canvas#view{width:300px;height:300px;image-rendering:pixelated;border:1px solid 
 <div class="page">
   <div class="eyebrow">Hanshow Stellar · BWR · TLSR8359</div>
   <h1>Caricatore immagini</h1>
-  <p class="sub">Da usare con «Firmware adattato a 1.54.bin» oppure «Firmware adattato a 2.13.bin», in base al tuo tag. Apri questa pagina in Chrome o Edge (su iPhone: Bluefy). <span class="mono">v6</span></p>
+  <p class="sub">Da usare con «Firmware adattato a 1.54.bin» oppure «Firmware adattato a 2.13.bin», in base al tuo tag. Apri questa pagina in Chrome o Edge (su iPhone: Bluefy). <span class="mono">v7</span></p>
 
   <div class="grid">
     <section class="card">
@@ -124,6 +128,38 @@ canvas#view{width:300px;height:300px;image-rendering:pixelated;border:1px solid 
         </div>
       </div>
       <div class="warn" id="warnBt" hidden>Questo browser non supporta il Bluetooth web. Usa Chrome o Edge.</div>
+    </section>
+
+    <section class="card" id="flashCard">
+      <h2><span class="num">4</span>Flash del firmware (cavo)</h2>
+      <p class="hint">Scrive il firmware nel tag con un adattatore USB-seriale a 3,3 V. Solo su PC con Chrome o Edge. Protocollo come nel flasher di atc1441.</p>
+      <ol class="steps">
+        <li>Batteria fuori dal tag. Collega <b>3V3→VCC</b>, <b>TXD→SWS</b>. Lascia <b>GND</b> staccato.</li>
+        <li>Apri la porta, scegli il file <span class="mono">.bin</span>, premi <b>Scrivi il firmware</b>.</li>
+        <li>Quando compare <b>Attivazione</b>, collega il GND al tag. Aspetta <b>Fatto</b>.</li>
+        <li>Poi stacca TXD/SWS, alimenta il tag e fai un power-cycle.</li>
+      </ol>
+      <div class="row">
+        <button class="btn btn--primary" id="fOpen">Apri porta</button>
+        <label>Baud <select id="fBaud"><option>115200</option><option>230400</option><option selected>460800</option><option>921600</option></select></label>
+        <label>Attivazione <select id="fAtime"><option value="1000">1 s</option><option value="3000">3 s</option><option value="4000">4 s</option><option value="8000" selected>8 s</option><option value="16000">16 s</option></select></label>
+      </div>
+      <div class="row"><label><input type="checkbox" id="fAll"> Mostra tutte le porte (anche Bluetooth)</label></div>
+      <div class="row"><input type="file" id="fFile" accept=".bin"></div>
+      <div class="row">
+        <button class="btn btn--primary" id="fWrite" disabled>Scrivi il firmware</button>
+        <button class="btn btn--ghost" id="fUnlock" disabled>Sblocca la flash</button>
+        <button class="btn btn--ghost" id="fReset" disabled>Riavvia il chip</button>
+      </div>
+      <div class="bar"><i id="fProg"></i></div>
+      <p class="hint" id="fMsg">Porta chiusa.</p>
+      <details>
+        <summary>Avanzate</summary>
+        <div class="warn">Cancellare tutta la flash elimina anche i dati di fabbrica del chip (indirizzo e calibrazione radio) e può lasciare il tag senza Bluetooth. Serve solo per ripulire un chip: la scrittura del firmware cancella già da sola i settori che usa.</div>
+        <button class="btn btn--ghost" id="fErase" disabled>Cancella tutta la flash</button>
+      </details>
+      <div class="logbox" id="flog"></div>
+      <div class="warn" id="warnSerial" hidden>Questo browser non supporta la porta seriale. Usa Chrome o Edge su PC.</div>
     </section>
   </div>
 </div>
@@ -460,6 +496,142 @@ function syncPanelUi(){
   $('rowTemp').hidden = !(t === 'temp' || t === 'both'); $('rowText').hidden = t !== 'text';
   $('city').hidden = $('tsrc').value !== 'weather'; $('tman').hidden = $('tsrc').value !== 'manual';
 }
+
+/* ---------- flasher via cavo (WebSerial) ----------
+   Protocollo SWire di Telink incapsulato nell'UART, lo stesso usato dal flasher di atc1441 per il TLSR8359.
+   Il filo TXD dell'adattatore va sul pad SWS del tag. */
+const F = { port: null, writer: null, fw: null, busy: false, open: false };
+const fdelay = ms => new Promise(r => setTimeout(r, ms));
+const fhex = (n, l) => n.toString(16).toUpperCase().padStart(l, '0');
+function flog(m){ const t = new Date().toLocaleTimeString('it-IT'); $('flog').textContent += t + '  ' + m + '\n'; $('flog').scrollTop = 1e9; }
+function fstatus(m, pct){ $('fMsg').textContent = m; if (pct !== undefined) $('fProg').style.width = pct + '%'; }
+
+// Un accesso SWire (scrittura di `data` a partire dal registro `addr`) = 5 byte di intestazione + dati.
+// Ogni byte diventa 10 byte UART (start, 8 bit, stop): bit 1 = 0x80, bit 0 = 0xFE. Il primo byte ha lo start a 1 (comando).
+function swire(addr, data){
+  const bytes = [0x5a, (addr >> 16) & 255, (addr >> 8) & 255, addr & 255, 0x00, ...data];
+  const pkt = new Uint8Array((bytes.length + 1) * 10), frame = new Uint8Array(10);
+  frame[9] = 0xfe;
+  bytes.forEach((v, n) => {
+    frame[0] = n === 0 ? 0x80 : 0xfe;
+    for (let b = 0; b < 8; b++) frame[1 + b] = (v << b) & 0x80 ? 0x80 : 0xfe;
+    pkt.set(frame, n * 10);
+  });
+  frame.fill(0x80, 0, 9);                               // chiusura: stop del comando
+  pkt.set(frame, bytes.length * 10);
+  return pkt;
+}
+const fraw = d => F.writer.write(d);
+const freg = (addr, ...data) => fraw(swire(addr, data));
+
+// Comandi verso la memoria flash, passando dal registro SPI del chip (0x0c = dati, 0x0d = chip select)
+async function fcmd(cmd){ await freg(0x0d, 0x00); await freg(0x0c, cmd & 255, 0x01); }
+const fWriteEnable = () => fcmd(0x06);
+const fWake = () => fcmd(0xab);
+async function fUnlock(){
+  await fWriteEnable();
+  await freg(0x0d, 0x00); await freg(0x0c, 0x01); await freg(0x0c, 0x00, 0x01);
+  await fWriteEnable();
+  await freg(0x0d, 0x00); await freg(0x0c, 0x01); await freg(0x0c, 0x00); await freg(0x0c, 0x00, 0x01);
+}
+async function fEraseAll(){ await fWriteEnable(); await fcmd(0x60); await fdelay(3500); }
+async function fSectorErase(addr){
+  await fWriteEnable();
+  await freg(0x0d, 0x00);
+  await freg(0x0c, 0x20); await freg(0x0c, (addr >> 16) & 255); await freg(0x0c, (addr >> 8) & 255); await freg(0x0c, addr & 255, 0x01);
+  await fdelay(300);
+}
+async function fWriteBlock(addr, data){                  // fino a 256 byte per volta
+  await fWriteEnable();
+  await freg(0x0d, 0x00);
+  const blk = Uint8Array.from([0x02, (addr >> 16) & 255, (addr >> 8) & 255, addr & 255, ...data]);
+  await freg(0x00b3, 0x80);                              // modalita' FIFO: tutti i byte vanno allo stesso registro
+  await fraw(swire(0x0c, blk));
+  await freg(0x00b3, 0x00);
+  await freg(0x0d, 0x01);
+  await fdelay(10);
+}
+const fSoftReset = () => freg(0x006f, 0x20);
+
+// Ferma la CPU del chip: reset con DTR/RTS (se l'adattatore li ha), poi comandi di "stop" ripetuti per `ms`.
+// Senza DTR/RTS (come il CP2102 a 5 pin) e' in questa finestra che si collega il GND per resettare il chip a mano.
+async function fActivate(ms){
+  const stop = swire(0x0602, [0x05]);
+  flog('Reset DTR/RTS (100 ms)');
+  await F.port.setSignals({ dataTerminalReady: true, requestToSend: true }); await fdelay(100);
+  await F.port.setSignals({ dataTerminalReady: false, requestToSend: false });
+  await fSoftReset();
+  flog('Attivazione (' + (ms / 1000) + ' s): collega il GND del tag adesso.');
+  fstatus('ATTIVAZIONE: collega il GND del tag ora', 0);
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) await fraw(stop);
+  await freg(0x00b2, 55);                                // velocita' del canale SWS
+  await fraw(stop);
+  await fWake();
+}
+async function flashWrite(atime){
+  const fw = F.fw, t0 = Date.now();
+  await fActivate(atime);
+  await fWriteEnable(); await fUnlock(); await fdelay(1500);
+  flog('Scrittura di ' + fw.length + ' byte nella flash...');
+  for (let addr = 0; addr < fw.length; addr += 256) {
+    if ((addr & 0x0fff) === 0) { fstatus(Math.floor(addr * 100 / fw.length) + '% · cancello il settore 0x' + fhex(addr, 6), addr * 100 / fw.length); await fSectorErase(addr); }
+    fstatus(Math.floor(addr * 100 / fw.length) + '% · scrivo 0x' + fhex(addr, 6), addr * 100 / fw.length);
+    await fWriteBlock(addr, fw.subarray(addr, addr + 256));
+  }
+  fstatus('Fatto.', 100);
+  flog('Fatto (' + ((Date.now() - t0) / 1000).toFixed(1) + ' s).');
+  flog('Riavvio del chip.'); await fSoftReset();
+}
+
+// Interfaccia
+function fSetButtons(){
+  const ok = F.open && !F.busy;
+  $('fWrite').disabled = !(ok && F.fw); $('fUnlock').disabled = !ok; $('fReset').disabled = !ok; $('fErase').disabled = !ok;
+  $('fOpen').disabled = F.busy; $('fBaud').disabled = F.open; $('fFile').disabled = F.busy;
+}
+async function fRun(name, job){
+  if (F.busy || !F.open) return;
+  F.busy = true; fSetButtons();
+  try { await job(); }
+  catch (e) { flog('Errore: ' + e.message); fstatus('Errore: ' + e.message + '. Riprova.', 0); }
+  F.busy = false; fSetButtons();
+}
+async function fToggle(){
+  if (F.open) {
+    try { await F.writer.close(); } catch (e) {}
+    try { await F.port.close(); } catch (e) {}
+    F.open = false; $('fOpen').textContent = 'Apri porta'; fstatus('Porta chiusa.', 0); flog('Porta chiusa.'); fSetButtons(); return;
+  }
+  try {
+    // di norma solo gli adattatori USB-seriale piu' comuni (Silicon Labs, WCH, FTDI, Prolific): niente Bluetooth nell'elenco
+    const filters = [0x10c4, 0x1a86, 0x0403, 0x067b].map(v => ({ usbVendorId: v }));
+    F.port = await navigator.serial.requestPort($('fAll').checked ? {} : { filters });
+    await F.port.open({ baudRate: +$('fBaud').value, bufferSize: 240 });
+    F.writer = F.port.writable.getWriter();
+    await F.port.setSignals({ dataTerminalReady: false, requestToSend: false });
+    F.open = true; $('fOpen').textContent = 'Chiudi porta'; fstatus('Porta aperta. Scegli il file e scrivi.', 0); flog('Porta aperta a ' + $('fBaud').value + ' baud.');
+  } catch (e) { flog('Porta non aperta: ' + e.message); fstatus('Porta non aperta: ' + e.message, 0); }
+  fSetButtons();
+}
+$('fOpen').onclick = fToggle;
+$('fFile').onchange = e => {
+  const f = e.target.files[0]; F.fw = null; if (!f) { fSetButtons(); return; }
+  const rd = new FileReader();
+  rd.onload = () => {
+    const a = new Uint8Array(rd.result);
+    // i firmware Telink hanno la firma "KNLT" a offset 8
+    if (a.length < 16 || String.fromCharCode(a[8], a[9], a[10], a[11]) !== 'KNLT') { flog('Il file non e\' un firmware Telink (.bin).'); fstatus('File non valido: non e\' un firmware Telink.', 0); }
+    else { F.fw = a; flog('File scelto: ' + f.name + ', ' + a.length + ' byte.'); fstatus(F.open ? 'Pronto: premi "Scrivi il firmware".' : 'File pronto: apri la porta.', 0); }
+    fSetButtons();
+  };
+  rd.readAsArrayBuffer(f);
+};
+$('fWrite').onclick = () => fRun('write', () => flashWrite(+$('fAtime').value));
+$('fUnlock').onclick = () => fRun('unlock', async () => { await fActivate(+$('fAtime').value); await fWriteEnable(); await fUnlock(); await fdelay(3500); flog('Flash sbloccata.'); fstatus('Flash sbloccata.', 100); });
+$('fReset').onclick = () => fRun('reset', async () => { await fActivate(+$('fAtime').value); await fSoftReset(); flog('Chip riavviato.'); fstatus('Chip riavviato.', 100); });
+$('fErase').onclick = () => { if (confirm('Cancellare TUTTA la flash?\nSi perdono anche indirizzo e calibrazione radio del chip. Continuare?')) fRun('erase', async () => { await fActivate(+$('fAtime').value); await fEraseAll(); flog('Flash cancellata.'); fstatus('Flash cancellata: ora scrivi un firmware.', 100); }); };
+if (!('serial' in navigator)) { $('warnSerial').hidden = false; $('fOpen').disabled = true; }
 
 /* ---------- eventi ---------- */
 $('bConnect').onclick = connect;
