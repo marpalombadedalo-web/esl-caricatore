@@ -59,7 +59,7 @@ ol.steps li{margin:3px 0}
 <div class="page">
   <div class="eyebrow">Hanshow Stellar · BWR · TLSR8359</div>
   <h1>Caricatore immagini</h1>
-  <p class="sub">Da usare con «Firmware adattato a 1.54.bin» oppure «Firmware adattato a 2.13.bin», in base al tuo tag. Apri questa pagina in Chrome o Edge (su iPhone: Bluefy). <span class="mono">v8</span></p>
+  <p class="sub">Da usare con «Firmware adattato a 1.54.bin» oppure «Firmware adattato a 2.13.bin», in base al tuo tag. Apri questa pagina in Chrome o Edge (su iPhone: Bluefy). <span class="mono">v9</span></p>
 
   <div class="grid">
     <section class="card">
@@ -178,7 +178,7 @@ ol.steps li{margin:3px 0}
         <button class="btn btn--ghost" id="wClock" disabled>Riavvia l'orologio</button>
       </div>
       <div class="sep"></div>
-      <div class="row"><input type="file" id="wVideo" accept="video/*"></div>
+      <div class="row"><label>Video (mp4, webm) o GIF animata <input type="file" id="wVideo" accept="video/*,image/gif,.gif"></label></div>
       <div class="row">
         <label>Velocità <select id="wSpeed"><option value="1">1×</option><option value="0.5">0,5×</option><option value="0.25">0,25×</option></select></label>
         <label><input type="checkbox" id="wLoop" checked> Ripeti</label>
@@ -781,12 +781,30 @@ function videoSource(file){
     });
   });
 }
+// GIF animata: si decodificano i fotogrammi con il loro tempo (ImageDecoder, Chrome/Edge) e si riducono, cosi' occupano poca memoria
+async function gifSource(file){
+  if (!('ImageDecoder' in window)) throw new Error('questo browser non legge le GIF: usa Chrome o Edge');
+  const dec = new ImageDecoder({ data: await file.arrayBuffer(), type: 'image/gif' });
+  await dec.tracks.ready;
+  const n = dec.tracks.selectedTrack.frameCount, frames = []; let total = 0;
+  for (let i = 0; i < n; i++) {
+    const { image } = await dec.decode({ frameIndex: i });
+    const k = Math.min(1, 320 / Math.max(image.displayWidth, image.displayHeight)), c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(image.displayWidth * k)); c.height = Math.max(1, Math.round(image.displayHeight * k));
+    const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(image, 0, 0, c.width, c.height);
+    const d = (image.duration || 100000) / 1e6; frames.push({ c, start: total }); total += d; image.close();
+  }
+  dec.close();
+  if (!frames.length) throw new Error('GIF senza fotogrammi');
+  return { duration: total, frameAt: async t => { let f = frames[0]; for (const x of frames) if (x.start <= t) f = x; return f.c; } };
+}
+const isGif = f => f.type === 'image/gif' || /\.gif$/i.test(f.name);
 $('wOpen').onclick = wToggle;
 $('wSend').onclick = wSendCurrent;
 $('wClock').onclick = async () => { try { await wWake(); await wCmd([0x05]); wlog('Orologio riattivato: ricomparira\' al prossimo minuto.'); } catch (e) { wlog('Errore: ' + e.message); } };
 $('wVideo').onchange = wSetButtons;
 $('wPlay').onclick = async () => {
-  try { const src = await videoSource($('wVideo').files[0]); wlog('Video: ' + src.duration.toFixed(1) + ' s.'); await wPlayFrames(src, +$('wSpeed').value, $('wLoop').checked); }
+  try { const f = $('wVideo').files[0], src = isGif(f) ? await gifSource(f) : await videoSource(f); wlog((isGif(f) ? 'GIF: ' : 'Video: ') + src.duration.toFixed(1) + ' s.'); await wPlayFrames(src, +$('wSpeed').value, $('wLoop').checked); }
   catch (e) { wlog('Errore: ' + e.message); wstatus('Errore: ' + e.message, 0); wSetButtons(); }
 };
 $('wStop').onclick = () => { WR.playing = false; };
