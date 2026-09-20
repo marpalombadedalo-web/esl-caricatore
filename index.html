@@ -55,7 +55,7 @@ canvas#view{width:300px;height:300px;image-rendering:pixelated;border:1px solid 
 <div class="page">
   <div class="eyebrow">Hanshow Stellar · BWR · TLSR8359</div>
   <h1>Caricatore immagini</h1>
-  <p class="sub">Da usare con «Firmware adattato a 1.54.bin» oppure «Firmware adattato a 2.13.bin», in base al tuo tag. Apri questa pagina in Chrome o Edge (su iPhone: Bluefy). <span class="mono">v5</span></p>
+  <p class="sub">Da usare con «Firmware adattato a 1.54.bin» oppure «Firmware adattato a 2.13.bin», in base al tuo tag. Apri questa pagina in Chrome o Edge (su iPhone: Bluefy). <span class="mono">v6</span></p>
 
   <div class="grid">
     <section class="card">
@@ -87,7 +87,7 @@ canvas#view{width:300px;height:300px;image-rendering:pixelated;border:1px solid 
       <div id="panelControls" hidden>
         <div class="row"><label>Pannello <select id="ptype"><option value="clock">Orario</option><option value="temp">Temperatura</option><option value="both">Orario + temperatura</option><option value="text">Testo</option></select></label></div>
         <div class="row" id="rowTemp">
-          <label>Temperatura da <select id="tsrc"><option value="weather">Meteo (città)</option><option value="tag">Sensore del tag</option><option value="manual">Manuale</option></select></label>
+          <label>Temperatura da <select id="tsrc"><option value="tag">Sensore interno del tag</option><option value="weather">Meteo (città)</option><option value="manual">Manuale</option></select></label>
           <input type="text" id="city" placeholder="Città, es. Milano" autocomplete="off">
           <input type="number" id="tman" step="0.1" value="20" title="Temperatura manuale in °C">
         </div>
@@ -97,7 +97,7 @@ canvas#view{width:300px;height:300px;image-rendering:pixelated;border:1px solid 
           <label>Aggiorna ogni <select id="pauto"><option value="0">mai</option><option value="5">5 min</option><option value="15">15 min</option><option value="30">30 min</option><option value="60">60 min</option></select></label>
           <button class="btn btn--ghost" id="bRefresh">Aggiorna anteprima</button>
         </div>
-        <p class="hint" id="pstat">Il meteo usa Open-Meteo (gratuito): la città che scrivi viene inviata a quel servizio. L'aggiornamento automatico funziona solo con questa pagina aperta e il tag vicino.</p>
+        <p class="hint" id="pstat">La temperatura viene letta dal sensore interno del tag (serve il tag connesso). Se scegli il meteo, la città che scrivi viene inviata a Open-Meteo, un servizio gratuito. L'aggiornamento automatico funziona solo con questa pagina aperta e il tag vicino.</p>
       </div>
 
       <div class="sep"></div>
@@ -286,7 +286,7 @@ async function connect(){
         const pr = chr.properties || {};
         log('Proprieta\' della caratteristica: ' + (Object.keys(pr).filter(k => pr[k]).join(', ') || 'non disponibili'));
         await sleep(300);                                // piccola pausa: su iPhone la prima scrittura subito dopo la connessione a volte si perde
-        setState(true); log('Connesso: caratteristica di scrittura trovata.'); return;
+        setState(true); log('Connesso: caratteristica di scrittura trovata.'); afterConnect(); return;
       } catch (e) { log('Errore: ' + e.message); await sleep(400); }
     }
     log('Impossibile connettersi.');
@@ -338,7 +338,8 @@ function buildPanel(){
   const ACC = $('pred').checked ? '#c4161c' : '#000', now = new Date(), type = $('ptype').value;
   const hh = String(now.getHours()).padStart(2, '0'), mm = String(now.getMinutes()).padStart(2, '0');
   const date = now.toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric', month: 'short' }).replace(/\./g, '').toUpperCase();
-  const tv = st.temp === null || isNaN(st.temp) ? '--' : String(Math.round(st.temp));
+  const manual = $('tsrc').value === 'manual', tnum = manual ? parseFloat($('tman').value) : st.temp, tlabel = manual ? 'MANUALE' : st.label;
+  const tv = tnum === null || isNaN(tnum) ? '--' : String(Math.round(tnum));
   const pad = Math.round(Math.min(W, H) * 0.07), small = Math.max(11, Math.round(Math.min(W, H) * 0.075));
   const wide = W / H > 1.6;
 
@@ -364,7 +365,7 @@ function buildPanel(){
   } else if (type === 'temp') {
     label('TEMPERATURA', pad, pad + small * 0.8); rule(pad, pad + small * 1.3, W * 0.22);
     bigTemp(W / 2, H * (wide ? 0.80 : 0.68), W - 2 * pad, H * (wide ? 0.52 : 0.40));
-    label((st.label || '') + (st.label ? ' · ' : '') + hhmm, W / 2, H - pad * 0.7, 'center');
+    label((tlabel || '') + (tlabel ? ' · ' : '') + hhmm, W / 2, H - pad * 0.7, 'center');
   } else if (type === 'both') {
     if (wide) {                                        // 2,13": due colonne
       label(date, pad, pad + small * 0.8);
@@ -410,9 +411,12 @@ async function refreshTemp(){
       try { localStorage.setItem('esl_city', city); } catch (e) {}
     } else {
       if (!(chr && device && device.gatt.connected)) throw new Error('connetti prima il tag');
+      // firmware v5: il comando 0x06 fa misurare il sensore del pannello adesso (senza, il valore e' quello dell'ultimo ridisegno).
+      // Con un firmware piu' vecchio il comando viene ignorato e si legge il valore disponibile.
+      try { await write([0x06]); await sleep(900); } catch (e) {}
       const env = await device.gatt.getPrimaryService('environmental_sensing');
       const v = await (await env.getCharacteristic(0x2A1F)).readValue();
-      st.temp = v.getInt16(0, true) / 10; st.label = 'SENSORE TAG';
+      st.temp = v.getInt16(0, true) / 10; st.label = 'SENSORE INTERNO';
     }
     $('pstat').textContent = 'Temperatura: ' + st.temp.toFixed(1).replace('.', ',') + ' °C (' + st.label.toLowerCase() + ') alle ' + hhmm + '.';
     return true;
@@ -448,6 +452,8 @@ async function autoTick(){
     render(); await send();
   } finally { autoBusy = false; }
 }
+const wantsTemp = () => $('content').value === 'panel' && ($('ptype').value === 'temp' || $('ptype').value === 'both');
+function afterConnect(){ if (wantsTemp() && $('tsrc').value !== 'manual') refreshTemp().then(render); }   // legge subito la temperatura appena il tag e' connesso
 function syncPanelUi(){
   const p = $('content').value === 'panel', t = $('ptype').value;
   $('imgControls').hidden = p; $('panelControls').hidden = !p;
@@ -458,7 +464,10 @@ function syncPanelUi(){
 /* ---------- eventi ---------- */
 $('bConnect').onclick = connect;
 $('bDisc').onclick = () => device && device.gatt.disconnect();
-$('bSend').onclick = send;
+$('bSend').onclick = async () => {                       // prima di inviare un pannello con la temperatura, la rileggo: dato fresco
+  if (wantsTemp() && $('tsrc').value !== 'manual') { await refreshTemp(); render(); }
+  send();
+};
 $('bClock').onclick = async () => { try { await write([0x05]); log('Orologio riattivato: comparira\' al prossimo minuto.'); } catch (e) { log('Errore: ' + e.message); } };
 $('bTest').onclick = testPattern;
 $('panel').addEventListener('input', () => { setProfile($('panel').value); render(); });
