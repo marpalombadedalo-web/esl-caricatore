@@ -30,6 +30,9 @@ h1{font-size:28px;font-weight:700;letter-spacing:-.02em;margin:4px 0 4px}
 label{font-size:13px;font-weight:500;color:var(--ink-2)}
 select,input[type=file],input[type=range]{font:inherit;font-size:13px;color:var(--ink)}
 select{padding:7px 10px;border-radius:10px;border:1px solid var(--hairline);background:var(--surface)}
+input[type=text],input[type=number]{font:inherit;font-size:13px;padding:7px 10px;border-radius:10px;border:1px solid var(--hairline);background:var(--surface);color:var(--ink);min-width:0;flex:1 1 140px}
+input[type=number]{flex:0 1 90px}
+.sep{height:1px;background:var(--hairline);margin:12px 0}
 .btn{display:inline-flex;align-items:center;gap:8px;padding:10px 18px;border-radius:var(--r-pill);font-weight:600;font-size:14px;border:none;cursor:pointer;font-family:inherit;transition:transform 120ms,background 180ms}
 .btn:active{transform:translateY(1px)} .btn:focus-visible{outline:none;box-shadow:var(--focus-ring)}
 .btn--primary{background:var(--fluo);color:var(--on-fluo)} .btn--primary:hover{background:var(--fluo-press)}
@@ -52,7 +55,7 @@ canvas#view{width:300px;height:300px;image-rendering:pixelated;border:1px solid 
 <div class="page">
   <div class="eyebrow">Hanshow Stellar · BWR · TLSR8359</div>
   <h1>Caricatore immagini</h1>
-  <p class="sub">Da usare con «Firmware adattato a 1.54.bin» oppure «Firmware adattato a 2.13.bin», in base al tuo tag. Apri questa pagina in Chrome o Edge (su iPhone: Bluefy). <span class="mono">v3</span></p>
+  <p class="sub">Da usare con «Firmware adattato a 1.54.bin» oppure «Firmware adattato a 2.13.bin», in base al tuo tag. Apri questa pagina in Chrome o Edge (su iPhone: Bluefy). <span class="mono">v5</span></p>
 
   <div class="grid">
     <section class="card">
@@ -67,8 +70,10 @@ canvas#view{width:300px;height:300px;image-rendering:pixelated;border:1px solid 
     </section>
 
     <section class="card">
-      <h2><span class="num">2</span>Immagine</h2>
-      <div class="row"><label>Pannello <select id="panel"><option value="154">1,54″ (200×200)</option><option value="213">2,13″ (250×122)</option></select></label></div>
+      <h2><span class="num">2</span>Contenuto</h2>
+      <div class="row"><label>Contenuto <select id="content"><option value="image">Immagine</option><option value="panel">Pannello (orario, temperatura…)</option></select></label></div>
+      <div class="row"><label>Schermo <select id="panel"><option value="154">1,54″ (200×200)</option><option value="213">2,13″ (250×122)</option></select></label></div>
+      <div id="imgControls">
       <div class="row"><input type="file" id="file" accept="image/*"><button class="btn btn--ghost" id="bTest">Immagine di prova</button></div>
       <div class="row">
         <label>Adattamento <select id="fit"><option value="cover">Riempi (taglia)</option><option value="contain">Adatta (bordi bianchi)</option><option value="stretch">Stira</option></select></label>
@@ -76,6 +81,27 @@ canvas#view{width:300px;height:300px;image-rendering:pixelated;border:1px solid 
       </div>
       <div class="row">
         <label><input type="checkbox" id="dither" checked> Dithering</label>
+      </div>
+      </div>
+
+      <div id="panelControls" hidden>
+        <div class="row"><label>Pannello <select id="ptype"><option value="clock">Orario</option><option value="temp">Temperatura</option><option value="both">Orario + temperatura</option><option value="text">Testo</option></select></label></div>
+        <div class="row" id="rowTemp">
+          <label>Temperatura da <select id="tsrc"><option value="weather">Meteo (città)</option><option value="tag">Sensore del tag</option><option value="manual">Manuale</option></select></label>
+          <input type="text" id="city" placeholder="Città, es. Milano" autocomplete="off">
+          <input type="number" id="tman" step="0.1" value="20" title="Temperatura manuale in °C">
+        </div>
+        <div class="row" id="rowText" hidden><input type="text" id="ptext" value="Ciao" placeholder="Scrivi il testo" autocomplete="off"></div>
+        <div class="row">
+          <label><input type="checkbox" id="pred" checked> Accento rosso</label>
+          <label>Aggiorna ogni <select id="pauto"><option value="0">mai</option><option value="5">5 min</option><option value="15">15 min</option><option value="30">30 min</option><option value="60">60 min</option></select></label>
+          <button class="btn btn--ghost" id="bRefresh">Aggiorna anteprima</button>
+        </div>
+        <p class="hint" id="pstat">Il meteo usa Open-Meteo (gratuito): la città che scrivi viene inviata a quel servizio. L'aggiornamento automatico funziona solo con questa pagina aperta e il tag vicino.</p>
+      </div>
+
+      <div class="sep"></div>
+      <div class="row">
         <label>Soglia <input type="range" id="thr" min="40" max="220" value="128"></label>
       </div>
       <div class="row">
@@ -127,22 +153,25 @@ const PAL = [[255,255,255],[0,0,0],[196,22,28]];
 function render(){
   const c = document.createElement('canvas'); c.width = W; c.height = H;
   const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, W, H);
-  if (srcImg) {
+  const isPanel = $('content').value === 'panel', src = isPanel ? buildPanel() : srcImg;
+  if (src) {
     g.save();
     g.translate(W / 2, H / 2);
     g.rotate(+$('rot').value * Math.PI / 180);
     g.scale($('fx').checked ? -1 : 1, $('fy').checked ? -1 : 1);
-    const iw = srcImg.width, ih = srcImg.height, fit = $('fit').value;
+    const iw = src.width, ih = src.height, fit = isPanel ? 'stretch' : $('fit').value;
     let dw = W, dh = H;
     if (fit !== 'stretch') { const s = (fit === 'cover' ? Math.max : Math.min)(W / iw, H / ih); dw = iw * s; dh = ih * s; }
-    g.drawImage(srcImg, -dw / 2, -dh / 2, dw, dh);
+    g.drawImage(src, -dw / 2, -dh / 2, dw, dh);
     g.restore();
   }
   quantize(g.getImageData(0, 0, W, H));
   paint();
 }
 function quantize(img){
-  const d = img.data, n = W * H, three = $('mode').value === '3', dith = $('dither').checked, thr = +$('thr').value;
+  // i pannelli (testo e numeri) hanno sempre 3 colori e niente dithering: bordi netti
+  const isPanel = $('content').value === 'panel';
+  const d = img.data, n = W * H, three = isPanel || $('mode').value === '3', dith = !isPanel && $('dither').checked, thr = +$('thr').value;
   const buf = new Float32Array(n * 3);
   for (let i = 0; i < n; i++) { buf[i*3] = d[i*4]; buf[i*3+1] = d[i*4+1]; buf[i*3+2] = d[i*4+2]; }
   const pal = three ? PAL : PAL.slice(0, 2);
@@ -154,7 +183,9 @@ function quantize(img){
       let bd = 1e12;
       // il "bianco" e il "nero" si spostano con la soglia, cosi' lo slider ha effetto anche a 3 colori
       const off = thr - 128;
-      for (let k = 0; k < 3; k++) {
+      // il rosso solo dove il colore e' davvero rossastro: i grigi (anche i bordi sfumati del testo) restano bianchi o neri
+      const redish = (r - (gg + b) / 2) > 45 && r > 110;
+      for (let k = 0; k < (redish ? 3 : 2); k++) {
         let pr = pal[k][0], pg = pal[k][1], pb = pal[k][2];
         let dist = (r-pr)**2 + (gg-pg)**2 + (b-pb)**2;
         if (k === 1) dist -= off * 90; if (k === 0) dist += off * 90;
@@ -242,7 +273,8 @@ function setState(on){
 }
 async function connect(){
   try {
-    device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: [SERVICE] });
+    // battery_service e environmental_sensing: il tag li espone (batteria e temperatura del pannello), servono per il pannello "Temperatura"
+    device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: [SERVICE, 'battery_service', 'environmental_sensing'] });
     device.addEventListener('gattserverdisconnected', () => { chr = null; setState(false); log('Disconnesso.'); });
     for (let t = 1; t <= 6; t++) {
       try {
@@ -291,6 +323,138 @@ async function send(){
   $('bSend').disabled = !chr;
 }
 
+/* ---------- pannelli (orario, temperatura, testo) ---------- */
+const MONO = "'JetBrains Mono', ui-monospace, Consolas, monospace";
+const st = { temp: null, label: '', batt: null };      // ultima temperatura letta e da dove arriva
+
+function fitFont(g, text, weight, maxW, maxH){         // il corpo piu' grande che sta in maxW x maxH
+  let s = Math.floor(maxH);
+  for (; s > 9; s--) { g.font = weight + ' ' + s + 'px ' + MONO; if (g.measureText(text).width <= maxW) break; }
+  return s;
+}
+function buildPanel(){
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, W, H); g.textBaseline = 'alphabetic';
+  const ACC = $('pred').checked ? '#c4161c' : '#000', now = new Date(), type = $('ptype').value;
+  const hh = String(now.getHours()).padStart(2, '0'), mm = String(now.getMinutes()).padStart(2, '0');
+  const date = now.toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric', month: 'short' }).replace(/\./g, '').toUpperCase();
+  const tv = st.temp === null || isNaN(st.temp) ? '--' : String(Math.round(st.temp));
+  const pad = Math.round(Math.min(W, H) * 0.07), small = Math.max(11, Math.round(Math.min(W, H) * 0.075));
+  const wide = W / H > 1.6;
+
+  const label = (txt, x, y, align) => { g.font = '600 ' + small + 'px ' + MONO; g.fillStyle = '#000'; g.textAlign = align || 'left'; g.fillText(txt, x, y); };
+  const rule = (x, y, w) => { g.fillStyle = ACC; g.fillRect(x, y, w, Math.max(2, Math.round(H * 0.02))); };
+  const bigTime = (cx, base, maxW, maxH) => {          // 20:47 con i due punti nell'accento
+    const s = fitFont(g, hh + ':' + mm, '700', maxW, maxH); g.font = '700 ' + s + 'px ' + MONO;
+    const a = g.measureText(hh).width, b = g.measureText(':').width, d = g.measureText(mm).width; let x = cx - (a + b + d) / 2;
+    g.textAlign = 'left'; g.fillStyle = '#000'; g.fillText(hh, x, base); g.fillStyle = ACC; g.fillText(':', x + a, base); g.fillStyle = '#000'; g.fillText(mm, x + a + b, base);
+  };
+  const bigTemp = (cx, base, maxW, maxH) => {          // 21° con la C nell'accento
+    const s = fitFont(g, tv + '°', '700', maxW * 0.8, maxH), cs = Math.round(s * 0.45);
+    g.font = '700 ' + s + 'px ' + MONO; const w1 = g.measureText(tv + '°').width;
+    g.font = '700 ' + cs + 'px ' + MONO; const w2 = g.measureText('C').width; const x = cx - (w1 + w2 + 4) / 2;
+    g.textAlign = 'left'; g.font = '700 ' + s + 'px ' + MONO; g.fillStyle = '#000'; g.fillText(tv + '°', x, base);
+    g.font = '700 ' + cs + 'px ' + MONO; g.fillStyle = ACC; g.fillText('C', x + w1 + 4, base);
+  };
+  const hhmm = hh + ':' + mm;
+
+  if (type === 'clock') {
+    label(date, pad, pad + small * 0.8); rule(pad, pad + small * 1.3, W * 0.22);
+    bigTime(W / 2, H * (wide ? 0.80 : 0.66), W - 2 * pad, H * (wide ? 0.52 : 0.34));
+  } else if (type === 'temp') {
+    label('TEMPERATURA', pad, pad + small * 0.8); rule(pad, pad + small * 1.3, W * 0.22);
+    bigTemp(W / 2, H * (wide ? 0.80 : 0.68), W - 2 * pad, H * (wide ? 0.52 : 0.40));
+    label((st.label || '') + (st.label ? ' · ' : '') + hhmm, W / 2, H - pad * 0.7, 'center');
+  } else if (type === 'both') {
+    if (wide) {                                        // 2,13": due colonne
+      label(date, pad, pad + small * 0.8);
+      bigTime(W * 0.27, H * 0.70, W * 0.50 - pad, H * 0.34);
+      g.fillStyle = ACC; g.fillRect(W * 0.55, pad, Math.max(2, Math.round(H * 0.02)), H - 2 * pad);
+      label('TEMP', W * 0.60, pad + small * 0.8);
+      bigTemp(W * 0.78, H * 0.72, W * 0.40 - pad, H * 0.40);
+    } else {                                           // 1,54": due righe
+      label(date, pad, pad + small * 0.8);
+      bigTime(W / 2, H * 0.50, W - 2 * pad, H * 0.26);
+      rule(pad, H * 0.56, W - 2 * pad);
+      bigTemp(W / 2, H * 0.90, W - 2 * pad, H * 0.30);
+    }
+  } else {                                             // testo libero, a capo automatico, corpo il piu' grande possibile
+    const words = ($('ptext').value || ' ').trim().split(/\s+/), maxW = W - 2 * pad, maxH = H - 2 * pad;
+    let best = null;
+    for (let s = Math.round(H * 0.6); s >= 10; s -= 2) {
+      g.font = '700 ' + s + 'px ' + MONO; const lines = []; let cur = '';
+      for (const w of words) { const t = cur ? cur + ' ' + w : w; if (g.measureText(t).width <= maxW || !cur) cur = t; else { lines.push(cur); cur = w; } }
+      lines.push(cur);
+      if (lines.length * s * 1.15 <= maxH && lines.every(l => g.measureText(l).width <= maxW)) { best = { s, lines }; break; }
+    }
+    if (!best) best = { s: 10, lines: [words.join(' ')] };
+    const lh = best.s * 1.15, y0 = (H - best.lines.length * lh) / 2 + best.s * 0.85;
+    g.font = '700 ' + best.s + 'px ' + MONO; g.textAlign = 'center'; g.fillStyle = '#000';
+    best.lines.forEach((l, i) => g.fillText(l, W / 2, y0 + i * lh));
+    rule(W * 0.4, H - pad * 0.9, W * 0.2);
+  }
+  return c;
+}
+
+async function refreshTemp(){
+  const src = $('tsrc').value, hhmm = new Date().toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+  try {
+    if (src === 'manual') { st.temp = parseFloat($('tman').value); st.label = 'MANUALE'; }
+    else if (src === 'weather') {
+      const city = $('city').value.trim(); if (!city) throw new Error('scrivi una citta\'');
+      const geo = await (await fetch('https://geocoding-api.open-meteo.com/v1/search?name=' + encodeURIComponent(city) + '&count=1&language=it&format=json')).json();
+      if (!geo.results || !geo.results.length) throw new Error('citta\' non trovata');
+      const p = geo.results[0];
+      const w = await (await fetch('https://api.open-meteo.com/v1/forecast?latitude=' + p.latitude + '&longitude=' + p.longitude + '&current=temperature_2m')).json();
+      st.temp = w.current.temperature_2m; st.label = p.name.toUpperCase();
+      try { localStorage.setItem('esl_city', city); } catch (e) {}
+    } else {
+      if (!(chr && device && device.gatt.connected)) throw new Error('connetti prima il tag');
+      const env = await device.gatt.getPrimaryService('environmental_sensing');
+      const v = await (await env.getCharacteristic(0x2A1F)).readValue();
+      st.temp = v.getInt16(0, true) / 10; st.label = 'SENSORE TAG';
+    }
+    $('pstat').textContent = 'Temperatura: ' + st.temp.toFixed(1).replace('.', ',') + ' °C (' + st.label.toLowerCase() + ') alle ' + hhmm + '.';
+    return true;
+  } catch (e) {
+    st.temp = null; $('pstat').textContent = 'Temperatura non disponibile: ' + e.message + '.'; log('Temperatura: ' + e.message); return false;
+  }
+}
+
+// Riconnessione al tag gia' scelto (dopo ogni invio il tag si scollega per ridisegnare lo schermo)
+async function reopen(){
+  if (chr && device && device.gatt.connected) return true;
+  if (!device) return false;
+  for (let t = 1; t <= 4; t++) {
+    try {
+      const srv = await device.gatt.connect(), svc = await srv.getPrimaryService(SERVICE);
+      chr = await svc.getCharacteristic(CHAR); mode = null; chunkLimit = CHUNK; await sleep(300); setState(true); return true;
+    } catch (e) { log('Riconnessione: ' + e.message); await sleep(700); }
+  }
+  return false;
+}
+let autoTimer = null, autoBusy = false;
+function setAuto(){
+  clearInterval(autoTimer); autoTimer = null; const m = +$('pauto').value;
+  if (m) { autoTimer = setInterval(autoTick, m * 60000); log('Aggiornamento automatico ogni ' + m + ' min (con la pagina aperta).'); }
+  else log('Aggiornamento automatico spento.');
+}
+async function autoTick(){
+  if (autoBusy || $('content').value !== 'panel' || !device) return;
+  autoBusy = true;
+  try {
+    if (!(await reopen())) { log('Aggiornamento automatico: tag non raggiungibile, riprovo al prossimo giro.'); return; }
+    if ($('ptype').value !== 'clock' && $('ptype').value !== 'text') await refreshTemp();
+    render(); await send();
+  } finally { autoBusy = false; }
+}
+function syncPanelUi(){
+  const p = $('content').value === 'panel', t = $('ptype').value;
+  $('imgControls').hidden = p; $('panelControls').hidden = !p;
+  $('rowTemp').hidden = !(t === 'temp' || t === 'both'); $('rowText').hidden = t !== 'text';
+  $('city').hidden = $('tsrc').value !== 'weather'; $('tman').hidden = $('tsrc').value !== 'manual';
+}
+
 /* ---------- eventi ---------- */
 $('bConnect').onclick = connect;
 $('bDisc').onclick = () => device && device.gatt.disconnect();
@@ -299,8 +463,18 @@ $('bClock').onclick = async () => { try { await write([0x05]); log('Orologio ria
 $('bTest').onclick = testPattern;
 $('panel').addEventListener('input', () => { setProfile($('panel').value); render(); });
 $('file').onchange = e => { const f = e.target.files[0]; if (!f) return; const im = new Image(); im.onload = () => { srcImg = im; render(); }; im.src = URL.createObjectURL(f); };
-['fit','mode','dither','thr','rot','fx','fy'].forEach(id => $(id).addEventListener('input', render));
+['fit','mode','dither','thr','rot','fx','fy','ptype','tman','ptext','pred'].forEach(id => $(id).addEventListener('input', () => { syncPanelUi(); render(); }));
+['content','tsrc','city'].forEach(id => $(id).addEventListener('input', async () => {
+  syncPanelUi();
+  if ($('content').value === 'panel' && ['tsrc'].includes(id)) await refreshTemp();
+  render();
+}));
+$('city').addEventListener('change', async () => { if ($('content').value === 'panel') { await refreshTemp(); render(); } });
+$('bRefresh').onclick = async () => { if ($('ptype').value === 'temp' || $('ptype').value === 'both') await refreshTemp(); render(); };
+$('pauto').addEventListener('input', setAuto);
+try { const c = localStorage.getItem('esl_city'); if (c) $('city').value = c; } catch (e) {}
 if (!navigator.bluetooth) { $('warnBt').hidden = false; $('bConnect').disabled = true; }
+syncPanelUi();
 render();
 </script>
 </body>
